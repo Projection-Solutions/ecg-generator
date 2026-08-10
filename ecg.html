@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Physiological ECG Waveform Engine</title>
+  <style>
+    :root {
+      --bg-color: #0b0f12;
+      --card-bg: #161b22;
+      --accent-green: #00ff66;
+      --grid-major: rgba(255, 60, 60, 0.35);
+      --grid-minor: rgba(255, 60, 60, 0.12);
+      --text-main: #e6edf3;
+      --text-muted: #8b949e;
+      --border-color: #30363d;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 12px;
+    }
+
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .monitor-frame {
+      position: relative;
+      background-color: #05080a;
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 320px;
+    }
+
+    .telemetry-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 12px;
+      padding: 12px;
+      background-color: var(--card-bg);
+      border-top: 1px solid var(--border-color);
+    }
+
+    .telemetry-item {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .telemetry-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .telemetry-value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      font-family: "Courier New", Courier, monospace;
+      color: var(--accent-green);
+    }
+
+    .controls-panel {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 16px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    select, input[type="range"] {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      outline: none;
+    }
+
+    select:focus {
+      border-color: var(--accent-green);
+    }
+
+    .range-val {
+      font-weight: 600;
+      color: var(--accent-green);
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Physiological ECG Generator</h1>
+    <span style="font-size: 0.8rem; color: var(--text-muted);">25 mm/s | 10 mm/mV</span>
+  </header>
+
+  <div class="monitor-frame">
+    <canvas id="ecgCanvas" width="900" height="320"></canvas>
+    <div class="telemetry-bar">
+      <div class="telemetry-item">
+        <span class="telemetry-label">Heart Rate</span>
+        <span class="telemetry-value" id="readoutBpm">75 BPM</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="telemetry-label">PR Interval</span>
+        <span class="telemetry-value" id="readoutPR">160 ms</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="telemetry-label">QRS Duration</span>
+        <span class="telemetry-value" id="readoutQRS">85 ms</span>
+      </div>
+      <div class="telemetry-item">
+        <span class="telemetry-label">ST Displacement</span>
+        <span class="telemetry-value" id="readoutST">0.0 mm</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls-panel">
+    <div class="control-group">
+      <label for="rhythmSelect">Cardiac Condition</label>
+      <select id="rhythmSelect">
+        <option value="nsr">Normal Sinus Rhythm</option>
+        <option value="ischemia">Subendocardial Ischemia (ST Depression)</option>
+        <option value="stemi">Acute Transmural Injury (STEMI)</option>
+        <option value="old_mi">Old Infarct (Pathologic Q-Wave + T Inversion)</option>
+        <option value="afib">Atrial Fibrillation (Irregular R-R)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label for="bpmSlider">Heart Rate: <span class="range-val" id="bpmVal">75</span> BPM</label>
+      <input type="range" id="bpmSlider" min="40" max="150" value="75">
+    </div>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('ecgCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // UI Controls
+  const rhythmSelect = document.getElementById('rhythmSelect');
+  const bpmSlider = document.getElementById('bpmSlider');
+  const bpmVal = document.getElementById('bpmVal');
+
+  // Readouts
+  const readoutBpm = document.getElementById('readoutBpm');
+  const readoutPR = document.getElementById('readoutPR');
+  const readoutQRS = document.getElementById('readoutQRS');
+  const readoutST = document.getElementById('readoutST');
+
+  let xPos = 0;
+  const sweepSpeed = 2; // Pixels per frame
+  let lastY = canvas.height / 2;
+
+  // ECG Mathematical Model Parameters (Gaussian Sums)
+  function getGaussianWave(t, a, b, c) {
+    return a * Math.exp(-Math.pow(t - b, 2) / (2 * c * c));
+  }
+
+  function getEcgVoltage(phase, condition) {
+    // phase goes 0.0 -> 1.0 per cardiac cycle
+    let voltage = 0;
+
+    // Default Normal Waves: [amplitude (mV), center_phase, width]
+    let p  = [0.15,  0.15, 0.02];
+    let q  = [-0.15, 0.38, 0.008];
+    let r  = [1.2,   0.40, 0.012];
+    let s  = [-0.25, 0.42, 0.012];
+    let st = [0.0,   0.50, 0.05]; // ST elevation/depression baseline offset
+    let t  = [0.3,   0.65, 0.04];
+
+    // Pathology Morphing
+    if (condition === 'ischemia') {
+      st = [-0.2, 0.50, 0.05]; // Horizontal ST depression
+      t  = [-0.25, 0.65, 0.04]; // Inverted T wave
+    } else if (condition === 'stemi') {
+      st = [0.45, 0.50, 0.06]; // Tombstone ST elevation
+      t  = [0.55, 0.62, 0.05]; // Elevated hyperacute T-wave merge
+    } else if (condition === 'old_mi') {
+      q  = [-0.45, 0.37, 0.025]; // Pathologic Q-wave (> 40ms duration)
+      st = [0.0,  0.50, 0.05];
+      t  = [-0.3,  0.65, 0.04];  // T-wave inversion
+    } else if (condition === 'afib') {
+      p  = [0, 0, 0]; // No P-waves
+      // Add random fibrillatory baseline noise
+      voltage += (Math.random() - 0.5) * 0.08;
+    }
+
+    // Sum Wave Components
+    voltage += getGaussianWave(phase, p[0], p[1], p[2]);
+    voltage += getGaussianWave(phase, q[0], q[1], q[2]);
+    voltage += getGaussianWave(phase, r[0], r[1], r[2]);
+    voltage += getGaussianWave(phase, s[0], s[1], s[2]);
+    voltage += getGaussianWave(phase, st[0], st[1], st[2]);
+    voltage += getGaussianWave(phase, t[0], t[1], t[2]);
+
+    return { voltage, stOffset: st[0] };
+  }
+
+  let phase = 0;
+  let currentBpm = 75;
+
+  function drawGrid() {
+    ctx.fillStyle = '#05080a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const gridSize = 10; // 1mm equivalent
+    
+    // Minor Grid Lines
+    ctx.strokeStyle = 'rgba(255, 60, 60, 0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = 0; x < canvas.width; x += gridSize) {
+      ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+    }
+    for (let y = 0; y < canvas.height; y += gridSize) {
+      ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+    }
+    ctx.stroke();
+
+    // Major Grid Lines (5mm boxes)
+    ctx.strokeStyle = 'rgba(255, 60, 60, 0.35)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    for (let x = 0; x < canvas.width; x += gridSize * 5) {
+      ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+    }
+    for (let y = 0; y < canvas.height; y += gridSize * 5) {
+      ctx.moveTo(0, y); ctx.lineTo(canvas.width, y);
+    }
+    ctx.stroke();
+  }
+
+  // Draw static grid initially
+  drawGrid();
+
+  function animate() {
+    const condition = rhythmSelect.value;
+    currentBpm = parseInt(bpmSlider.value, 10);
+    bpmVal.textContent = currentBpm;
+
+    // Cardiac Cycle Timing Calculations
+    let beatDurationSeconds = 60 / currentBpm;
+    if (condition === 'afib') {
+      // Add slight RR variability for AFib
+      beatDurationSeconds += (Math.random() - 0.5) * 0.15;
+    }
+
+    const frameRate = 60; 
+    const phaseIncrement = 1 / (beatDurationSeconds * frameRate);
+
+    phase += phaseIncrement;
+    if (phase >= 1.0) phase = 0;
+
+    // Compute Y coordinate (100px per mV scaling)
+    const { voltage, stOffset } = getEcgVoltage(phase, condition);
+    const centerY = canvas.height / 2;
+    const scaleY = 70; // Voltage amplitude multiplier
+    const yPos = centerY - (voltage * scaleY);
+
+    // Erase trailing sweep sector ahead of the line
+    const eraseWidth = 20;
+    ctx.fillStyle = '#05080a';
+    ctx.fillRect(xPos, 0, eraseWidth, canvas.height);
+
+    // Redraw grid lines in erased region
+    const gridSize = 10;
+    ctx.lineWidth = 1;
+    for (let x = Math.floor(xPos / gridSize) * gridSize; x < xPos + eraseWidth; x += gridSize) {
+      ctx.strokeStyle = (x % (gridSize * 5) === 0) ? 'rgba(255, 60, 60, 0.35)' : 'rgba(255, 60, 60, 0.12)';
+      ctx.beginPath();
+      ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height);
+      ctx.stroke();
+    }
+
+    // Render ECG Trace Segment
+    ctx.strokeStyle = '#00ff66';
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 4;
+    ctx.shadowColor = '#00ff66';
+    ctx.beginPath();
+    ctx.moveTo(xPos, lastY);
+    ctx.lineTo(xPos + sweepSpeed, yPos);
+    ctx.stroke();
+    ctx.shadowBlur = 0; // Reset blur for performance
+
+    lastY = yPos;
+    xPos += sweepSpeed;
+
+    if (xPos >= canvas.width) {
+      xPos = 0;
+    }
+
+    // Update Telemetry Display
+    readoutBpm.textContent = `${currentBpm} BPM`;
+    readoutPR.textContent = condition === 'afib' ? 'N/A' : '160 ms';
+    readoutQRS.textContent = condition === 'old_mi' ? '110 ms' : '85 ms';
+    readoutST.textContent = `${(stOffset * 10).toFixed(1)} mm`;
+
+    requestAnimationFrame(animate);
+  }
+
+  // Start Animation Loop
+  requestAnimationFrame(animate);
+</script>
+
+</body>
+</html>
